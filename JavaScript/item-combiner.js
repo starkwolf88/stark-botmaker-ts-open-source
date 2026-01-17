@@ -688,6 +688,7 @@ var stateManager = () => {
     case 'open_bank':
       {
         if (!bot.localPlayerIdle()) break;
+        openBankTimeout();
         if (!bot.bank.isOpen()) {
           timeoutManager.add({
             state,
@@ -750,6 +751,7 @@ var stateManager = () => {
     case 'close_bank':
       {
         if (!bot.localPlayerIdle()) break;
+        closeBankTimeout();
         if (bot.bank.isOpen()) {
           timeoutManager.add({
             state,
@@ -775,6 +777,7 @@ var stateManager = () => {
           state.main_state = 'open_bank';
           break;
         }
+        itemInteractTimeout();
         var widgetData = itemCombinationData.make_widget_data;
         if (widgetData) {
           if (!client.getWidget(widgetData.packed_widget_id)) {
