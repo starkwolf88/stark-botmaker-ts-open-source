@@ -630,7 +630,7 @@ var state = {
   uiCompleted: false,
   scriptInitialised: false,
   antibanEnabled: true,
-  debugEnabled: true,
+  debugEnabled: false,
   debugFullState: false
 };
 var onStart = () => {
