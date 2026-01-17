@@ -80,7 +80,7 @@ var itemCombinationData = [{
     opcode: 57,
     p0: -1
   },
-  timeout: 54
+  timeout: 56
 }];
 
 var logger = (state, type, source, message) => {
