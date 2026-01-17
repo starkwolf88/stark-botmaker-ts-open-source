@@ -583,6 +583,7 @@ var generalFunctions = {
     }
   },
   endScript: state => {
+    bot.breakHandler.setBreakHandlerStatus(false);
     bot.printGameMessage("Terminating ".concat(state.scriptName, "."));
     bot.walking.webWalkCancel();
     bot.events.unregisterAll();
