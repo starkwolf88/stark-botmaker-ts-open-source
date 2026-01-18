@@ -318,13 +318,14 @@ var generalFunctions = {
       logger(state, 'debug', 'onGameTick', "Function start. Script game tick ".concat(state.gameTick));
       state.gameTick++;
       if (state.debugEnabled && state.debugFullState) debugFunctions.stateDebugger(state);
-      if (state.stuck_count > 3) throw new Error("Fatal error with script. Failure location: ".concat(state.failure_location));
+      if (state.stuck_count > 3) throw new Error("Fatal error with script. Failure origin: ".concat(state.failure_origin));
       if (state.timeout > 0) {
         state.timeout--;
         return false;
       }
       timeoutManager.tick(state);
       if (timeoutManager.isWaiting()) return false;
+      state.stuck_count = 0;
       if (state.antibanEnabled && antibanFunctions.afkTrigger(state)) return false;
       return true;
     } catch (error) {
@@ -335,7 +336,7 @@ var generalFunctions = {
   },
   handleFailure: (state, failureLocation, failureMessage, failResetState) => {
     logger(state, 'debug', 'handleFailure', failureMessage);
-    state.failure_location = failureLocation;
+    state.failure_origin = "".concat(failureLocation, " - ").concat(failureMessage);
     state.stuck_count++;
     if (failResetState) state.main_state = failResetState;
   },
@@ -694,7 +695,7 @@ var state = {
   antibanTriggered: false,
   debugEnabled: false,
   debugFullState: false,
-  failure_location: '',
+  failure_origin: '',
   gameTick: 0,
   main_state: 'open_bank',
   scriptName: '[Stark] Item Combiner',
