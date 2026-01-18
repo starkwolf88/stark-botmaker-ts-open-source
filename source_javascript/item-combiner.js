@@ -692,7 +692,7 @@ var widgetFunctions = {
 var state = {
   antibanEnabled: true,
   antibanTriggered: false,
-  debugEnabled: true,
+  debugEnabled: false,
   debugFullState: false,
   failure_location: '',
   gameTick: 0,
