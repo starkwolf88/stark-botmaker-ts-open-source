@@ -195,6 +195,69 @@ function _unsupportedIterableToArray(r, a) {
   }
 }
 
+var utilityFunctions = {
+  convertToTitleCase: stringToConvert => stringToConvert.toLowerCase().split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+  coordsToWorldPoint: _ref => {
+    var _ref2 = _slicedToArray(_ref, 3),
+      x = _ref2[0],
+      y = _ref2[1],
+      z = _ref2[2];
+    return new net.runelite.api.coords.WorldPoint(x, y, z);
+  },
+  randomInt: (min, max) => Math.floor(Math.random() * (max - min + 1)) + min
+};
+
+var antibanFunctions = {
+  getRandomisedAfkTimeout: function getRandomisedAfkTimeout() {
+    var min = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : 0;
+    var max = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 3;
+    var triggerChancePercentage = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : 0;
+    var additionalAfkChancePercentage = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : 0;
+    var timeout = 0;
+    if (utilityFunctions.randomInt(1, 100) <= triggerChancePercentage) {
+      timeout = utilityFunctions.randomInt(min, max);
+      if (utilityFunctions.randomInt(1, 100) <= additionalAfkChancePercentage) timeout += utilityFunctions.randomInt(min, max);
+    }
+    return timeout;
+  },
+  afkTrigger: state => {
+    if (!state.antibanTriggered) {
+      var antibanTimeout = antibanFunctions.getRandomisedAfkTimeout(5, 15, 1, 5) || antibanFunctions.getRandomisedAfkTimeout(1, 5, 1, 5);
+      if (antibanTimeout > 0) {
+        state.timeout = antibanTimeout;
+        state.antibanTriggered = true;
+        logger(state, 'all', 'antibanFunctions.afkTrigger', "Random AFK for ".concat(antibanTimeout, " ticks."));
+        return true;
+      }
+    }
+    state.antibanTriggered = false;
+    return false;
+  }
+};
+
+var debugFunctions = {
+  stateDebugger: function stateDebugger(state) {
+    var prefix = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : '';
+    var _recurse = function recurse(object) {
+      var prefix = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : '';
+      for (var _i = 0, _Object$entries = Object.entries(object); _i < _Object$entries.length; _i++) {
+        var _Object$entries$_i = _slicedToArray(_Object$entries[_i], 2),
+          key = _Object$entries$_i[0],
+          value = _Object$entries$_i[1];
+        var type = _typeof(value);
+        if (type === 'string' || type === 'number' || type === 'boolean') {
+          logger(state, 'debug', 'stateDebugger', "".concat(prefix).concat(key, ": ").concat(String(value)));
+        } else if (Array.isArray(value)) {
+          logger(state, 'debug', 'stateDebugger', "".concat(prefix).concat(key, " Length: ").concat(value.length));
+        } else if (type === 'object' && value !== null) {
+          _recurse(value, "".concat(prefix).concat(key, "."));
+        }
+      }
+    };
+    _recurse(state, prefix);
+  }
+};
+
 var timeoutManager = {
   conditions: [],
   globalFallback: undefined,
@@ -205,40 +268,31 @@ var timeoutManager = {
       conditionFunction = _ref.conditionFunction,
       maxWait = _ref.maxWait,
       onFail = _ref.onFail,
-      action = _ref.action,
-      maxAttempts = _ref.maxAttempts,
-      retryTimeout = _ref.retryTimeout;
+      _ref$initialTimeout = _ref.initialTimeout,
+      initialTimeout = _ref$initialTimeout === void 0 ? 0 : _ref$initialTimeout;
     var failCallback = typeof onFail === 'string' ? () => logger(state, 'all', 'Timeout', onFail) : onFail;
     this.conditions.push({
       conditionFunction,
       maxWait,
       ticksWaited: 0,
-      onFail: failCallback,
-      action,
-      maxAttempts,
-      retryTimeout,
-      _attempts: 0,
-      _retryCooldown: 0
+      ticksDelayed: initialTimeout,
+      onFail: failCallback
     });
   },
-  tick() {
+  tick(state) {
     this.conditions = this.conditions.filter(condition => {
-      if (condition.conditionFunction()) return false;
-      if (condition.action && (condition.maxAttempts === undefined || condition._attempts < condition.maxAttempts)) {
-        while (condition._retryCooldown <= 0 && (condition.maxAttempts === undefined || condition._attempts < condition.maxAttempts)) {
-          var _condition$retryTimeo;
-          condition.action();
-          condition._attempts++;
-          if (condition.conditionFunction()) return false;
-          condition._retryCooldown = (_condition$retryTimeo = condition.retryTimeout) !== null && _condition$retryTimeo !== void 0 ? _condition$retryTimeo : 1;
-          if (condition._retryCooldown > 0) break;
-        }
-        if (condition._retryCooldown > 0) condition._retryCooldown--;
-        if (condition.conditionFunction()) return false;
+      if (this.conditions.length === 0) {
+        state.stuck_count = 0;
       }
+      if (condition.ticksDelayed > 0) {
+        condition.ticksDelayed--;
+        return true;
+      }
+      if (condition.conditionFunction()) return false;
       condition.ticksWaited++;
-      if (condition.maxWait !== undefined && condition.ticksWaited >= condition.maxWait) {
-        if (condition.onFail) condition.onFail();
+      if (condition.ticksWaited >= condition.maxWait) {
+        var _condition$onFail;
+        (_condition$onFail = condition.onFail) === null || _condition$onFail === void 0 || _condition$onFail.call(condition);
         return false;
       }
       return true;
@@ -258,7 +312,72 @@ var timeoutManager = {
   }
 };
 
+var generalFunctions = {
+  gameTick: state => {
+    try {
+      logger(state, 'debug', 'onGameTick', "Function start. Script game tick ".concat(state.gameTick));
+      state.gameTick++;
+      if (state.debugEnabled && state.debugFullState) debugFunctions.stateDebugger(state);
+      if (state.stuck_count > 3) throw new Error("Fatal error with script. Failure location: ".concat(state.failure_location));
+      if (state.timeout > 0) {
+        state.timeout--;
+        return false;
+      }
+      timeoutManager.tick(state);
+      if (timeoutManager.isWaiting()) return false;
+      if (state.antibanEnabled && antibanFunctions.afkTrigger(state)) return false;
+      return true;
+    } catch (error) {
+      logger(state, 'all', 'Script', error.toString());
+      bot.terminate();
+      return false;
+    }
+  },
+  handleFailure: (state, failureLocation, failureMessage, failResetState) => {
+    logger(state, 'debug', 'handleFailure', failureMessage);
+    state.failure_location = failureLocation;
+    state.stuck_count++;
+    if (failResetState) state.main_state = failResetState;
+  },
+  endScript: state => {
+    bot.breakHandler.setBreakHandlerStatus(false);
+    bot.printGameMessage("Terminating ".concat(state.scriptName, "."));
+    bot.walking.webWalkCancel();
+    bot.events.unregisterAll();
+  }
+};
+
 var bankFunctions = {
+  openBank: state => {
+    if (!bot.bank.isOpen()) {
+      logger(state, 'debug', "bankFunctions.openBank", 'Opening the bank');
+      bot.bank.open();
+      timeoutManager.add({
+        state,
+        conditionFunction: () => bot.bank.isOpen(),
+        initialTimeout: 1,
+        maxWait: 10,
+        onFail: () => generalFunctions.handleFailure(state, 'bankFunctions.openBank', 'Bank is not open after 10 ticks.')
+      });
+      return false;
+    }
+    return true;
+  },
+  closeBank: state => {
+    if (bot.bank.isOpen()) {
+      logger(state, 'debug', "bankFunctions.closeBank", 'Closing the bank');
+      bot.bank.close();
+      timeoutManager.add({
+        state,
+        conditionFunction: () => !bot.bank.isOpen(),
+        initialTimeout: 1,
+        maxWait: 10,
+        onFail: () => generalFunctions.handleFailure(state, 'bankFunctions.closeBank', 'Bank is not closed after 10 ticks.')
+      });
+      return false;
+    }
+    return true;
+  },
   requireBankOpen: (state, fallbackState) => {
     if (!bot.bank.isOpen()) {
       state.main_state = fallbackState;
@@ -275,27 +394,21 @@ var bankFunctions = {
   },
   isQuantityLow: (itemId, quantity) => bot.bank.getQuantityOfId(itemId) < quantity,
   anyQuantitiyLow: items => items.some(item => bankFunctions.isQuantityLow(item.id, item.quantity)),
-  withdrawMissingItems: (state, items, failState) => {
+  withdrawMissingItems: (state, items, failResetState) => {
     var _iterator = _createForOfIteratorHelper(items),
       _step;
     try {
       var _loop = function _loop() {
           var item = _step.value;
           if (!bot.inventory.containsId(item.id)) {
+            logger(state, 'debug', 'bankFunctions.withdrawMissingItems', "Withdrawing item ID ".concat(item.id, " with quantity ").concat(item.quantity));
+            bot.bank.withdrawQuantityWithId(item.id, item.quantity);
             timeoutManager.add({
               state,
               conditionFunction: () => bot.inventory.containsId(item.id),
-              action: () => {
-                logger(state, 'debug', 'bankFunctions.withdrawMissingItems', "Withdrawing item ID ".concat(item.id, " with quantity ").concat(item.quantity));
-                bot.bank.withdrawQuantityWithId(item.id, item.quantity);
-              },
+              initialTimeout: 1,
               maxWait: 10,
-              maxAttempts: 3,
-              retryTimeout: 3,
-              onFail: () => {
-                logger(state, 'debug', 'bankFunctions.withdrawMissingItems', "Failed to withdraw item ID ".concat(item.id, " after 3 attempts and 10 ticks."));
-                state.main_state = failState;
-              }
+              onFail: () => generalFunctions.handleFailure(state, 'bankFunctions.withdrawMissingItems', "Failed to withdraw item ID ".concat(item.id, " after 10 ticks."), failResetState)
             });
             return {
               v: true
@@ -313,6 +426,23 @@ var bankFunctions = {
       _iterator.f();
     }
     return false;
+  },
+  depositAllItems: (state, itemId, failResetState) => {
+    var currentEmptySlots = bot.inventory.getEmptySlots();
+    if (currentEmptySlots == 28) return true;
+    if (!itemId || itemId && bot.inventory.containsId(itemId)) {
+      logger(state, 'debug', 'bankFunctions.depositAllItems', "Depositing ".concat(itemId ? "item ID ".concat(itemId) : 'all items'));
+      itemId ? bot.bank.depositAllWithId(itemId) : bot.bank.depositAll();
+      timeoutManager.add({
+        state,
+        conditionFunction: () => currentEmptySlots < bot.inventory.getEmptySlots(),
+        initialTimeout: 1,
+        maxWait: 10,
+        onFail: () => generalFunctions.handleFailure(state, 'bankFunctions.depositAllItems', "Failed to deposit ".concat(itemId ? "item ID ".concat(itemId) : 'all items', " after 10 ticks."), failResetState)
+      });
+      return false;
+    }
+    return true;
   }
 };
 
@@ -512,87 +642,6 @@ var createUi = state => {
   return frame;
 };
 
-var utilityFunctions = {
-  convertToTitleCase: stringToConvert => stringToConvert.toLowerCase().split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
-  coordsToWorldPoint: _ref => {
-    var _ref2 = _slicedToArray(_ref, 3),
-      x = _ref2[0],
-      y = _ref2[1],
-      z = _ref2[2];
-    return new net.runelite.api.coords.WorldPoint(x, y, z);
-  },
-  randomInt: (min, max) => Math.floor(Math.random() * (max - min + 1)) + min
-};
-
-var antibanFunctions = {
-  getRandomisedAfkTimeout: function getRandomisedAfkTimeout() {
-    var min = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : 0;
-    var max = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 3;
-    var triggerChancePercentage = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : 0;
-    var additionalAfkChancePercentage = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : 0;
-    var timeout = 0;
-    if (utilityFunctions.randomInt(1, 100) <= triggerChancePercentage) {
-      timeout = utilityFunctions.randomInt(min, max);
-      if (utilityFunctions.randomInt(1, 100) <= additionalAfkChancePercentage) timeout += utilityFunctions.randomInt(min, max);
-    }
-    return timeout;
-  },
-  afkTrigger: state => {
-    if (!state.antibanTriggered) {
-      var antibanTimeout = antibanFunctions.getRandomisedAfkTimeout(5, 15, 1, 5) || antibanFunctions.getRandomisedAfkTimeout(1, 5, 1, 5);
-      if (antibanTimeout > 0) {
-        state.timeout = antibanTimeout;
-        state.antibanTriggered = true;
-        logger(state, 'all', 'antibanFunctions.afkTrigger', "Random AFK for ".concat(antibanTimeout, " ticks."));
-        return true;
-      }
-    }
-    state.antibanTriggered = false;
-    return false;
-  }
-};
-
-var debugFunctions = {
-  stateDebugger: function stateDebugger(state) {
-    var prefix = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : '';
-    for (var _i = 0, _Object$entries = Object.entries(state); _i < _Object$entries.length; _i++) {
-      var _Object$entries$_i = _slicedToArray(_Object$entries[_i], 2),
-        key = _Object$entries$_i[0],
-        value = _Object$entries$_i[1];
-      var type = _typeof(value);
-      if (type === 'string' || type === 'number' || type === 'boolean') logger(state, 'debug', 'stateDebugger', "".concat(prefix).concat(key, ": ").concat(String(value)));else if (Array.isArray(value)) logger(state, 'debug', 'stateDebugger', "".concat(prefix).concat(key, " Length: ").concat(value.length));else if (type === 'object' && value !== null) debugFunctions.stateDebugger(value, "".concat(prefix).concat(key, "."));
-    }
-  }
-};
-
-var generalFunctions = {
-  gameTick: state => {
-    try {
-      logger(state, 'debug', 'onGameTick', "Function start. Script game tick ".concat(state.gameTick));
-      state.gameTick++;
-      if (state.debugEnabled && state.debugFullState) debugFunctions.stateDebugger(state);
-      if (state.timeout > 0) {
-        state.timeout--;
-        return false;
-      }
-      timeoutManager.tick();
-      if (timeoutManager.isWaiting()) return false;
-      if (state.antibanEnabled && antibanFunctions.afkTrigger(state)) return false;
-      return true;
-    } catch (error) {
-      logger(state, 'all', 'Script', error.toString());
-      bot.terminate();
-      return false;
-    }
-  },
-  endScript: state => {
-    bot.breakHandler.setBreakHandlerStatus(false);
-    bot.printGameMessage("Terminating ".concat(state.scriptName, "."));
-    bot.walking.webWalkCancel();
-    bot.events.unregisterAll();
-  }
-};
-
 var inventoryFunctions = {
   getFirstExistingItemId: itemIds => {
     if (!bot.inventory.containsAnyIds(itemIds)) return undefined;
@@ -604,7 +653,8 @@ var inventoryFunctions = {
     if (existingItemIds.length === 0) return undefined;
     return existingItemIds[Math.floor(Math.random() * existingItemIds.length)];
   },
-  checkQuantitiesMatch: items => {
+  checkQuantitiesMatch: (state, items) => {
+    logger(state, 'debug', "checkQuantitiesMatch", 'Checking inventory item quantities.');
     var _iterator = _createForOfIteratorHelper(items),
       _step;
     try {
@@ -621,19 +671,39 @@ var inventoryFunctions = {
   }
 };
 
+var widgetFunctions = {
+  widgetExists: widgetId => Boolean(client.getWidget(widgetId)),
+  interactWithWidget: (state, widgetData) => {
+    if (!client.getWidget(widgetData.packed_widget_id)) {
+      timeoutManager.add({
+        state,
+        conditionFunction: () => client.getWidget(widgetData.packed_widget_id) !== null,
+        initialTimeout: 1,
+        maxWait: 10,
+        onFail: () => generalFunctions.handleFailure(state, 'widgetFunctions.interactWithWidget', "Widget ID ".concat(widgetData.packed_widget_id, " not visible after 10 ticks"))
+      });
+      return false;
+    }
+    bot.widgets.interactSpecifiedWidget(widgetData.packed_widget_id, widgetData.identifier, widgetData.opcode, widgetData.p0);
+    return true;
+  }
+};
+
 var state = {
-  scriptName: '[Stark] Item Combiner',
-  main_state: 'open_bank',
-  itemCombinationData: undefined,
-  gameTick: 0,
-  timeout: 0,
-  antibanTriggered: false,
-  startDepositAllCompleted: false,
-  uiCompleted: false,
-  scriptInitialised: false,
   antibanEnabled: true,
-  debugEnabled: false,
-  debugFullState: false
+  antibanTriggered: false,
+  debugEnabled: true,
+  debugFullState: false,
+  failure_location: '',
+  gameTick: 0,
+  main_state: 'open_bank',
+  scriptName: '[Stark] Item Combiner',
+  stuck_count: 0,
+  timeout: 0,
+  scriptInitialised: false,
+  uiCompleted: false,
+  itemCombinationData: undefined,
+  startDepositAllCompleted: false
 };
 var onStart = () => {
   try {
@@ -668,51 +738,24 @@ var getGuiItemCombinationData = () => {
   logger(state, 'all', 'Script', "We are creating ".concat(utilityFunctions.convertToTitleCase(itemCombination.combined_item_name), "."));
   state.itemCombinationData = itemCombination;
 };
-var openBankTimeout = () => {
-  logger(state, 'debug', "stateManager: ".concat(state.main_state), 'Opening the bank');
-  bot.bank.open();
-};
-var closeBankTimeout = () => {
-  logger(state, 'debug', "stateManager: ".concat(state.main_state), 'Closing the bank');
-  bot.bank.close();
-};
-var itemInteractTimeout = () => {
-  var itemCombinationData = state.itemCombinationData;
-  if (!itemCombinationData) throw new Error('Item combination not initialized');
-  var item1 = itemCombinationData.items[0];
-  var item2 = itemCombinationData.items[1];
-  logger(state, 'debug', "stateManager: ".concat(state.main_state), "Combining ".concat(utilityFunctions.convertToTitleCase(item1.name), " with ").concat(utilityFunctions.convertToTitleCase(item2.name), ". Timeout: ").concat(itemCombinationData.timeout, "."));
-  bot.inventory.itemOnItemWithIds(item1.id, item2.id);
-};
 var stateManager = () => {
-  logger(state, 'debug', "stateManager: ".concat(state.main_state), "Function start.");
+  logger(state, 'debug', "stateManager (".concat(state.main_state, ")"), "Function start.");
   var itemCombinationData = state.itemCombinationData;
   if (!itemCombinationData) throw new Error('Item combination not initialized');
   switch (state.main_state) {
     case 'open_bank':
       {
         if (!bot.localPlayerIdle()) break;
-        if (!bot.bank.isOpen()) {
-          openBankTimeout();
-          state.timeout = 1;
-          timeoutManager.add({
-            state,
-            conditionFunction: () => bot.bank.isOpen(),
-            maxWait: 10,
-            onFail: () => {
-              throw new Error('Bank did not open during `open_bank` after 10 ticks.');
-            }
-          });
-          break;
-        }
+        if (!bankFunctions.openBank(state)) break;
         state.main_state = 'deposit_items';
         break;
       }
     case 'deposit_items':
       {
         if (!bankFunctions.requireBankOpen(state, 'open_bank') || !bot.localPlayerIdle()) break;
-        logger(state, 'debug', "stateManager: ".concat(state.main_state), 'Depositing items.');
-        itemCombinationData.deposit_all || !state.startDepositAllCompleted ? bot.bank.depositAll() : bot.bank.depositAllWithId(itemCombinationData.combined_item_id);
+        var depositItemId = itemCombinationData.combined_item_id;
+        if (itemCombinationData.deposit_all || !state.startDepositAllCompleted) depositItemId = 0;
+        if (!bankFunctions.depositAllItems(state, depositItemId, 'close_bank')) break;
         state.startDepositAllCompleted = true;
         state.main_state = 'check_bank_quantities';
         break;
@@ -729,22 +772,17 @@ var stateManager = () => {
       {
         if (!bankFunctions.requireBankOpen(state, 'open_bank') || !bot.localPlayerIdle() || bot.bank.isBanking()) break;
         if (bankFunctions.withdrawMissingItems(state, itemCombinationData.items, 'close_bank')) break;
-        if (!bot.inventory.containsAllIds(itemCombinationData.items.map(item => item.id))) {
-          state.main_state = 'open_bank';
-          break;
-        }
         state.main_state = 'validate_inventory_quantities';
         break;
       }
     case 'validate_inventory_quantities':
       {
         if (!bot.localPlayerIdle()) break;
-        logger(state, 'debug', "stateManager: ".concat(state.main_state), 'Checking inventory item quantities.');
-        if (!inventoryFunctions.checkQuantitiesMatch(itemCombinationData.items.map(item => ({
+        if (!inventoryFunctions.checkQuantitiesMatch(state, itemCombinationData.items.map(item => ({
           itemId: item.id,
           quantity: item.quantity
         })))) {
-          state.main_state = 'open_bank';
+          generalFunctions.handleFailure(state, "stateManager: ".concat(state.main_state), 'Inventory quantities do not match required quantities.', 'open_bank');
           break;
         }
         state.main_state = 'close_bank';
@@ -753,20 +791,7 @@ var stateManager = () => {
     case 'close_bank':
       {
         if (!bot.localPlayerIdle()) break;
-        if (bot.bank.isOpen()) {
-          closeBankTimeout();
-          state.timeout = 1;
-          timeoutManager.add({
-            state,
-            conditionFunction: () => !bot.bank.isOpen(),
-            action: () => closeBankTimeout(),
-            maxWait: 10,
-            onFail: () => {
-              throw new Error('Bank did not close after 10 ticks.');
-            }
-          });
-          break;
-        }
+        if (!bankFunctions.closeBank(state)) break;
         state.main_state = 'item_interact';
         break;
       }
@@ -774,30 +799,16 @@ var stateManager = () => {
       {
         if (!bankFunctions.requireBankClosed(state, 'close_bank') || !bot.localPlayerIdle()) break;
         if (!bot.inventory.containsAllIds(itemCombinationData.items.map(item => item.id))) {
-          state.main_state = 'open_bank';
+          generalFunctions.handleFailure(state, "stateManager: ".concat(state.main_state), 'Inventory does not contain the correct items.', 'open_bank');
           break;
         }
-        itemInteractTimeout();
+        var item1 = itemCombinationData.items[0];
+        var item2 = itemCombinationData.items[1];
+        bot.inventory.itemOnItemWithIds(item1.id, item2.id);
         var widgetData = itemCombinationData.make_widget_data;
-        if (widgetData) {
-          if (!client.getWidget(widgetData.packed_widget_id)) {
-            state.timeout = 1;
-            timeoutManager.add({
-              state,
-              conditionFunction: () => client.getWidget(widgetData.packed_widget_id) !== null,
-              action: () => itemInteractTimeout(),
-              maxWait: 10,
-              maxAttempts: 3,
-              retryTimeout: 3,
-              onFail: () => {
-                throw new Error('Make item widget not visible after 3 attempts and 10 ticks.');
-              }
-            });
-            break;
-          }
-          bot.widgets.interactSpecifiedWidget(widgetData.packed_widget_id, widgetData.identifier, widgetData.opcode, widgetData.p0);
-        }
+        if (widgetData && !widgetFunctions.interactWithWidget(state, widgetData)) break;
         state.timeout = itemCombinationData.timeout;
+        logger(state, 'debug', "stateManager: ".concat(state.main_state), "Combining ".concat(utilityFunctions.convertToTitleCase(item1.name), " with ").concat(utilityFunctions.convertToTitleCase(item2.name), ". Timeout: ").concat(itemCombinationData.timeout, "."));
         state.main_state = 'open_bank';
         break;
       }
