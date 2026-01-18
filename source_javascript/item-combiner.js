@@ -402,7 +402,7 @@ var bankFunctions = {
           var item = _step.value;
           if (!bot.inventory.containsId(item.id)) {
             logger(state, 'debug', 'bankFunctions.withdrawMissingItems', "Withdrawing item ID ".concat(item.id, " with quantity ").concat(item.quantity));
-            bot.bank.withdrawQuantityWithId(item.id, item.quantity);
+            item.quantity == 'all' ? bot.bank.withdrawAllWithId(item.id) : bot.bank.withdrawQuantityWithId(item.id, item.quantity);
             timeoutManager.add({
               state,
               conditionFunction: () => bot.inventory.containsId(item.id),
