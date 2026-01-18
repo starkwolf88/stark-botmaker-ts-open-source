@@ -20,7 +20,7 @@ const state = {
     antibanTriggered: false,
     debugEnabled: false,
     debugFullState: false,
-    failure_location: '',
+    failure_origin: '',
     gameTick: 0,
     main_state: 'walk_to_snowy_whites',
     scriptName: '[Stark] Snowy Knight Catcher',
@@ -174,7 +174,7 @@ const stateManager = () => {
 
         // Withdraw stamina potion from the bank. Reset to `close_bank` on failure.
         case 'withdraw_stamina': {
-            if (!bankFunctions.requireBankOpen(state, 'open_bank') || !bot.localPlayerIdle() || bot.bank.isBanking()) break;
+            if (!state.useStaminas || !bankFunctions.requireBankOpen(state, 'open_bank') || !bot.localPlayerIdle() || bot.bank.isBanking()) break;
             if (bankFunctions.withdrawMissingItems(state, [{id: itemIds.stamina_potion_4, quantity: 1}], 'close_bank')) break; 
             state.main_state = 'withdraw_jars';
             break;
