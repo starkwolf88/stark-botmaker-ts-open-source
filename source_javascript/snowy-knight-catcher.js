@@ -526,7 +526,7 @@ var stateManager = () => {
         if (!bankFunctions.requireBankOpen(state, 'open_bank') || !bot.localPlayerIdle()) break;
         logger(state, 'debug', "stateManager: ".concat(state.main_state), 'Checking butterfly jar quantity.');
         if (bankFunctions.isQuantityLow(itemIds.butterfly_jar, 1)) throw new Error('Ran out of Butterfly jars.');
-        state.useStaminas && !bankFunctions.isQuantityLow(itemIds.stamina_potion_4, 0) ? state.main_state = 'withdraw_stamina' : state.main_state = 'withdraw_jars';
+        state.useStaminas && !bankFunctions.isQuantityLow(itemIds.stamina_potion_4, 1) ? state.main_state = 'withdraw_stamina' : state.main_state = 'withdraw_jars';
         break;
       }
     case 'withdraw_stamina':
