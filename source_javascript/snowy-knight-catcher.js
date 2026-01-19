@@ -531,7 +531,7 @@ var stateManager = () => {
       }
     case 'withdraw_stamina':
       {
-        if (!state.useStaminas || !bankFunctions.requireBankOpen(state, 'open_bank') || !bot.localPlayerIdle() || bot.bank.isBanking()) break;
+        if (!state.useStaminas || bankFunctions.isQuantityLow(itemIds.stamina_potion_4, 0) || !bankFunctions.requireBankOpen(state, 'open_bank') || !bot.localPlayerIdle() || bot.bank.isBanking()) break;
         if (bankFunctions.withdrawMissingItems(state, [{
           id: itemIds.stamina_potion_4,
           quantity: 1
