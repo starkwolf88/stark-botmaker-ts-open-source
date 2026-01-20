@@ -428,6 +428,39 @@ var bankFunctions = {
     }
     return false;
   },
+  withdrawFirstExisting: (state, itemIds, quantity, failResetState) => {
+    var _iterator2 = _createForOfIteratorHelper(itemIds),
+      _step2;
+    try {
+      var _loop2 = function _loop2() {
+          var itemId = _step2.value;
+          if (bot.bank.getQuantityOfId(itemId) >= quantity) {
+            logger(state, 'debug', 'bankFunctions.withdrawFirstExisting', "Withdrawing item ID ".concat(itemId, " with quantity ").concat(quantity));
+            bot.bank.withdrawQuantityWithId(itemId, quantity);
+            timeoutManager.add({
+              state,
+              conditionFunction: () => bot.inventory.containsId(itemId),
+              initialTimeout: 1,
+              maxWait: 10,
+              onFail: () => generalFunctions.handleFailure(state, 'bankFunctions.withdrawMissingItems', "Failed to withdraw item ID ".concat(itemId, " after 10 ticks."), failResetState)
+            });
+            return {
+              v: true
+            };
+          }
+        },
+        _ret2;
+      for (_iterator2.s(); !(_step2 = _iterator2.n()).done;) {
+        _ret2 = _loop2();
+        if (_ret2) return _ret2.v;
+      }
+    } catch (err) {
+      _iterator2.e(err);
+    } finally {
+      _iterator2.f();
+    }
+    return false;
+  },
   depositAllItems: (state, itemId, failResetState) => {
     var currentEmptySlots = bot.inventory.getEmptySlots();
     if (currentEmptySlots == 28) return true;
