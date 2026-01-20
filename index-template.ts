@@ -73,10 +73,12 @@ const stateManager = () => {
         // Starting state of the script.
         case 'start_state': {
             //
+            break;
         }
 
         case 'next state': {
             //
+            break;
         }
 
         // Default to start state.
