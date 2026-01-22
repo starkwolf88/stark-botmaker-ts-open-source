@@ -1,4 +1,3 @@
-/herb-run
 /mahogany-homes
 /testing
 source_javascript/example-state-progression.js
@@ -6,4 +5,3 @@ source_javascript/example-ui-components.js
 source_javascript/testing.js
 source_javascript/test-compilation.js
 source_javascript/mahogany-homes.js
-source_javascript/herb-run.js
