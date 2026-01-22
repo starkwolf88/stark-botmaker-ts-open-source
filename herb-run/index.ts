@@ -115,8 +115,8 @@ export const onGameTick = () => {
     try {
         if (!generalFunctions.gameTick(state)) return;
 
-        // Enable break if not banking, idle, not walking and the `mainState` is `start_state`.
-        if (!bot.bank.isBanking() && bot.localPlayerIdle() && !bot.walking.isWebWalking() && state.mainState == 'start_state') bot.breakHandler.setBreakHandlerStatus(true);
+        // Enable break if not banking, idle, not walking and the `mainState` is `assign_herb_patch`.
+        if (!bot.bank.isBanking() && bot.localPlayerIdle() && !bot.walking.isWebWalking() && state.mainState == 'assign_herb_patch') bot.breakHandler.setBreakHandlerStatus(true);
 
         stateManager();
     } catch (error) {

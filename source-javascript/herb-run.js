@@ -608,7 +608,7 @@ var onGameTick = () => {
   bot.breakHandler.setBreakHandlerStatus(false);
   try {
     if (!generalFunctions.gameTick(state)) return;
-    if (!bot.bank.isBanking() && bot.localPlayerIdle() && !bot.walking.isWebWalking() && state.mainState == 'start_state') bot.breakHandler.setBreakHandlerStatus(true);
+    if (!bot.bank.isBanking() && bot.localPlayerIdle() && !bot.walking.isWebWalking() && state.mainState == 'assign_herb_patch') bot.breakHandler.setBreakHandlerStatus(true);
     stateManager();
   } catch (error) {
     logger(state, 'all', 'Script', error.toString());
