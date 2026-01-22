@@ -12,8 +12,7 @@ var locationCoords = {
   },
   quetzacali_gorge: {
     bank: [1519, 3229, 0]
-  }
-};
+  }};
 
 var npcIds = {
   mons_gratia: {
@@ -135,12 +134,30 @@ var logger = (state, type, source, message) => {
 
 var utilityFunctions = {
   convertToTitleCase: stringToConvert => stringToConvert.toLowerCase().split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
-  coordsToWorldPoint: _ref => {
-    var _ref2 = _slicedToArray(_ref, 3),
-      x = _ref2[0],
-      y = _ref2[1],
-      z = _ref2[2];
-    return new net.runelite.api.coords.WorldPoint(x, y, z);
+  getObjectByValues: (array, match) => {
+    var item = array.find(object => Object.entries(match).every(_ref => {
+      var _ref2 = _slicedToArray(_ref, 2),
+        k = _ref2[0],
+        v = _ref2[1];
+      return object[k] === v;
+    }));
+    return item !== null && item !== void 0 ? item : false;
+  },
+  setArrObjValues: (array, match, setValues) => {
+    var object = array.find(item => Object.entries(match).every(_ref3 => {
+      var _ref4 = _slicedToArray(_ref3, 2),
+        k = _ref4[0],
+        v = _ref4[1];
+      return v !== false && item[k] === v;
+    }));
+    if (!object) return false;
+    Object.entries(setValues).forEach(_ref5 => {
+      var _ref6 = _slicedToArray(_ref5, 2),
+        k = _ref6[0],
+        v = _ref6[1];
+      object[k] = v;
+    });
+    return true;
   },
   randomInt: (min, max) => Math.floor(Math.random() * (max - min + 1)) + min
 };
@@ -217,11 +234,8 @@ var timeoutManager = {
       onFail: failCallback
     });
   },
-  tick(state) {
+  tick() {
     this.conditions = this.conditions.filter(condition => {
-      if (this.conditions.length === 0) {
-        state.stuck_count = 0;
-      }
       if (condition.ticksDelayed > 0) {
         condition.ticksDelayed--;
         return true;
@@ -253,36 +267,86 @@ var timeoutManager = {
 var generalFunctions = {
   gameTick: state => {
     try {
-      logger(state, 'debug', 'onGameTick', "Function start. Script game tick ".concat(state.gameTick));
+      logger(state, 'debug', 'onGameTick', "Script game tick ".concat(state.gameTick, " -------------------------"));
       state.gameTick++;
       if (state.debugEnabled && state.debugFullState) debugFunctions.stateDebugger(state);
-      if (state.stuck_count > 3) throw new Error("Fatal error with script. Failure origin: ".concat(state.failure_origin));
       if (state.timeout > 0) {
         state.timeout--;
         return false;
       }
-      timeoutManager.tick(state);
+      timeoutManager.tick();
       if (timeoutManager.isWaiting()) return false;
-      state.stuck_count = 0;
       if (state.antibanEnabled && antibanFunctions.afkTrigger(state)) return false;
       return true;
     } catch (error) {
-      logger(state, 'all', 'Script', error.toString());
-      bot.terminate();
+      var fatalMessage = error.toString();
+      logger(state, 'all', 'Script', fatalMessage);
+      generalFunctions.handleFailure(state, 'gameTick', fatalMessage);
       return false;
     }
   },
   handleFailure: (state, failureLocation, failureMessage, failResetState) => {
+    var failureKey = "".concat(failureLocation, " - ").concat(failureMessage);
     logger(state, 'debug', 'handleFailure', failureMessage);
-    state.failure_origin = "".concat(failureLocation, " - ").concat(failureMessage);
-    state.stuck_count++;
-    if (failResetState) state.main_state = failResetState;
+    state.failureCounts[failureKey] = state.lastFailureKey === failureKey ? (state.failureCounts[failureKey] || 1) + 1 : 1;
+    state.lastFailureKey = failureKey;
+    state.failureOrigin = failureKey;
+    if (state.failureCounts[failureKey] >= 3) {
+      logger(state, 'all', 'Script', "Fatal error: \"".concat(failureKey, "\" occurred 3x in a row."));
+      bot.terminate();
+      return;
+    }
+    if (failResetState) state.mainState = failResetState;
   },
   endScript: state => {
     bot.breakHandler.setBreakHandlerStatus(false);
     bot.printGameMessage("Terminating ".concat(state.scriptName, "."));
     bot.walking.webWalkCancel();
     bot.events.unregisterAll();
+  }
+};
+
+var inventoryFunctions = {
+  getFirstExistingItemId: itemIds => {
+    if (!bot.inventory.containsAnyIds(itemIds)) return undefined;
+    return itemIds.find(itemId => bot.inventory.containsId(itemId));
+  },
+  getRandomExistingItemId: itemIds => {
+    if (!bot.inventory.containsAnyIds(itemIds)) return undefined;
+    var existingItemIds = itemIds.filter(itemId => bot.inventory.containsId(itemId));
+    if (existingItemIds.length === 0) return undefined;
+    return existingItemIds[Math.floor(Math.random() * existingItemIds.length)];
+  },
+  checkQuantitiesMatch: (state, items) => {
+    logger(state, 'debug', "checkQuantitiesMatch", 'Checking inventory item quantities.');
+    var _iterator = _createForOfIteratorHelper(items),
+      _step;
+    try {
+      for (_iterator.s(); !(_step = _iterator.n()).done;) {
+        var item = _step.value;
+        if (bot.inventory.getQuantityOfId(item.itemId) !== item.quantity) return false;
+      }
+    } catch (err) {
+      _iterator.e(err);
+    } finally {
+      _iterator.f();
+    }
+    return true;
+  },
+  itemInInventoryTimeout: (state, itemId, failResetState) => {
+    if (!bot.inventory.containsId(itemId)) {
+      logger(state, 'debug', 'inventoryFunctions.itemInInventoryTimeout', "Item ID ".concat(itemId, " not in the inventory."));
+      timeoutManager.add({
+        state,
+        conditionFunction: () => bot.inventory.containsId(itemId),
+        initialTimeout: 1,
+        maxWait: 10,
+        onFail: () => generalFunctions.handleFailure(state, 'inventoryFunctions.itemInInventoryTimeout', "Item ID ".concat(itemId, " not in inventory after 10 ticks."), failResetState)
+      });
+      return false;
+    }
+    logger(state, 'debug', 'inventoryFunctions.itemInInventoryTimeout', "Item ID ".concat(itemId, " is in the inventory."));
+    return true;
   }
 };
 
@@ -319,14 +383,14 @@ var bankFunctions = {
   },
   requireBankOpen: (state, fallbackState) => {
     if (!bot.bank.isOpen()) {
-      state.main_state = fallbackState;
+      state.mainState = fallbackState;
       return false;
     }
     return true;
   },
   requireBankClosed: (state, fallbackState) => {
     if (bot.bank.isOpen()) {
-      state.main_state = fallbackState;
+      state.mainState = fallbackState;
       return false;
     }
     return true;
@@ -337,67 +401,39 @@ var bankFunctions = {
     var _iterator = _createForOfIteratorHelper(items),
       _step;
     try {
-      var _loop = function _loop() {
-          var item = _step.value;
-          if (!bot.inventory.containsId(item.id)) {
-            logger(state, 'debug', 'bankFunctions.withdrawMissingItems', "Withdrawing item ID ".concat(item.id, " with quantity ").concat(item.quantity));
-            item.quantity == 'all' ? bot.bank.withdrawAllWithId(item.id) : bot.bank.withdrawQuantityWithId(item.id, item.quantity);
-            timeoutManager.add({
-              state,
-              conditionFunction: () => bot.inventory.containsId(item.id),
-              initialTimeout: 1,
-              maxWait: 10,
-              onFail: () => generalFunctions.handleFailure(state, 'bankFunctions.withdrawMissingItems', "Failed to withdraw item ID ".concat(item.id, " after 10 ticks."), failResetState)
-            });
-            return {
-              v: true
-            };
-          }
-        },
-        _ret;
       for (_iterator.s(); !(_step = _iterator.n()).done;) {
-        _ret = _loop();
-        if (_ret) return _ret.v;
+        var item = _step.value;
+        if (!bot.inventory.containsId(item.id)) {
+          logger(state, 'debug', 'bankFunctions.withdrawMissingItems', "Withdrawing item ID ".concat(item.id, " with quantity ").concat(item.quantity));
+          item.quantity == 'all' ? bot.bank.withdrawAllWithId(item.id) : bot.bank.withdrawQuantityWithId(item.id, item.quantity);
+          if (!inventoryFunctions.itemInInventoryTimeout(state, item.id, failResetState)) return false;
+        }
       }
     } catch (err) {
       _iterator.e(err);
     } finally {
       _iterator.f();
     }
-    return false;
+    return true;
   },
   withdrawFirstExisting: (state, itemIds, quantity, failResetState) => {
     var _iterator2 = _createForOfIteratorHelper(itemIds),
       _step2;
     try {
-      var _loop2 = function _loop2() {
-          var itemId = _step2.value;
-          if (bot.bank.getQuantityOfId(itemId) >= quantity) {
-            logger(state, 'debug', 'bankFunctions.withdrawFirstExisting', "Withdrawing item ID ".concat(itemId, " with quantity ").concat(quantity));
-            bot.bank.withdrawQuantityWithId(itemId, quantity);
-            timeoutManager.add({
-              state,
-              conditionFunction: () => bot.inventory.containsId(itemId),
-              initialTimeout: 1,
-              maxWait: 10,
-              onFail: () => generalFunctions.handleFailure(state, 'bankFunctions.withdrawMissingItems', "Failed to withdraw item ID ".concat(itemId, " after 10 ticks."), failResetState)
-            });
-            return {
-              v: true
-            };
-          }
-        },
-        _ret2;
       for (_iterator2.s(); !(_step2 = _iterator2.n()).done;) {
-        _ret2 = _loop2();
-        if (_ret2) return _ret2.v;
+        var itemId = _step2.value;
+        if (bot.bank.getQuantityOfId(itemId) >= quantity) {
+          logger(state, 'debug', 'bankFunctions.withdrawFirstExisting', "Withdrawing item ID ".concat(itemId, " with quantity ").concat(quantity));
+          bot.bank.withdrawQuantityWithId(itemId, quantity);
+          if (!inventoryFunctions.itemInInventoryTimeout(state, itemId, failResetState)) return false;
+        }
       }
     } catch (err) {
       _iterator2.e(err);
     } finally {
       _iterator2.f();
     }
-    return false;
+    return true;
   },
   depositAllItems: (state, itemId, failResetState) => {
     var currentEmptySlots = bot.inventory.getEmptySlots();
@@ -419,30 +455,47 @@ var bankFunctions = {
 };
 
 var locationFunctions = {
+  coordsToWorldPoint: _ref => {
+    var _ref2 = _slicedToArray(_ref, 3),
+      x = _ref2[0],
+      y = _ref2[1],
+      z = _ref2[2];
+    return new net.runelite.api.coords.WorldPoint(x, y, z);
+  },
   localPlayerDistanceFromWorldPoint: worldPoint => client.getLocalPlayer().getWorldLocation().distanceTo(worldPoint),
   isPlayerNearWorldPoint: function isPlayerNearWorldPoint(worldPoint) {
     var tileThreshold = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 3;
     return locationFunctions.localPlayerDistanceFromWorldPoint(worldPoint) <= tileThreshold;
+  },
+  webWalkTimeout: (state, worldPoint, targetDescription, maxWait) => {
+    var isPlayerAtLocation = () => locationFunctions.isPlayerNearWorldPoint(worldPoint);
+    if (!isPlayerAtLocation() && !bot.walking.isWebWalking()) {
+      logger(state, 'all', 'webWalkTimeout', "Walking to ".concat(targetDescription));
+      bot.walking.webWalkStart(worldPoint);
+      timeoutManager.add({
+        state,
+        conditionFunction: () => isPlayerAtLocation(),
+        maxWait,
+        onFail: () => generalFunctions.handleFailure(state, 'webWalkTimeout', "Unable to locate player at ".concat(targetDescription, " after ").concat(maxWait, " ticks."))
+      });
+      return false;
+    }
+    logger(state, 'debug', 'webWalkTimeout', "Player is at ".concat(targetDescription, "."));
+    return true;
   }
 };
 
 var npcFunctions = {
-  getClosestNpc: npcId => {
-    var npcs = bot.npcs.getWithIds([npcId]);
-    if (npcs) {
-      var closestNpc = null;
-      var minDistance = Number.MAX_VALUE;
-      npcs.forEach(npc => {
-        var distance = client.getLocalPlayer().getWorldLocation().distanceTo(npc.getWorldLocation());
-        if (distance < minDistance) {
-          minDistance = distance;
-          closestNpc = npc;
-        }
-      });
-      if (closestNpc) return closestNpc;
-      return undefined;
-    }
-    return undefined;
+  getClosestNpc: npcIds => {
+    var npcs = bot.npcs.getWithIds(npcIds);
+    if (!(npcs !== null && npcs !== void 0 && npcs.length)) return undefined;
+    var closest = null;
+    var min = Number.POSITIVE_INFINITY;
+    npcs.forEach(npc => {
+      var d = client.getLocalPlayer().getWorldLocation().distanceTo(npc.getWorldLocation());
+      if (d < min) min = d, closest = npc;
+    });
+    return closest || undefined;
   },
   getFirstNpc: npcId => bot.npcs.getWithIds([npcId])[0],
   npcExists: npcId => bot.npcs.getWithIds([npcId]).some(npc => npc.getId() === npcId)
@@ -453,11 +506,12 @@ var state = {
   antibanTriggered: false,
   debugEnabled: false,
   debugFullState: false,
-  failure_origin: '',
+  failureCounts: {},
+  failureOrigin: '',
   gameTick: 0,
-  main_state: 'walk_to_snowy_whites',
+  lastFailureKey: '',
+  mainState: 'walk_to_snowy_knights',
   scriptName: '[Stark] Snowy Knight Catcher',
-  stuck_count: 0,
   timeout: 0,
   useStaminas: bot.variables.getBooleanVariable('Use Staminas')
 };
@@ -466,7 +520,7 @@ var onGameTick = () => {
   bot.breakHandler.setBreakHandlerStatus(false);
   try {
     if (!generalFunctions.gameTick(state)) return;
-    if (bot.localPlayerIdle() && !bot.walking.isWebWalking() && state.main_state == 'open_bank') bot.breakHandler.setBreakHandlerStatus(true);
+    if (bot.localPlayerIdle() && !bot.walking.isWebWalking() && state.mainState == 'open_bank') bot.breakHandler.setBreakHandlerStatus(true);
     stateManager();
   } catch (error) {
     logger(state, 'all', 'Script', error.toString());
@@ -475,52 +529,38 @@ var onGameTick = () => {
 };
 var onEnd = () => generalFunctions.endScript(state);
 var scriptLocations = {
-  quetzacaliGorgeBank: utilityFunctions.coordsToWorldPoint(locationCoords.quetzacali_gorge.bank),
-  monsGratiaSnowyWhiteArea: utilityFunctions.coordsToWorldPoint(locationCoords.mons_gratia.snowy_knight_area)
+  quetzacaliGorgeBank: locationFunctions.coordsToWorldPoint(locationCoords.quetzacali_gorge.bank),
+  monsGratiaSnowyKnightArea: locationFunctions.coordsToWorldPoint(locationCoords.mons_gratia.snowy_knight_area)
 };
-var isPlayerAtSnowyWhites = () => locationFunctions.isPlayerNearWorldPoint(scriptLocations.monsGratiaSnowyWhiteArea);
-var getSnowyWhiteCount = () => bot.inventory.getQuantityOfId(itemIds.snowy_knight);
-var isPlayerAtBank = () => locationFunctions.isPlayerNearWorldPoint(scriptLocations.quetzacaliGorgeBank);
 var stateManager = () => {
-  logger(state, 'debug', "stateManager: ".concat(state.main_state), "Function start.");
-  switch (state.main_state) {
-    case 'walk_to_snowy_whites':
+  logger(state, 'debug', "stateManager", "".concat(state.mainState));
+  switch (state.mainState) {
+    case 'walk_to_snowy_knights':
       {
         if (!bot.localPlayerIdle() || bot.walking.isWebWalking()) break;
         if (!bot.inventory.containsId(itemIds.butterfly_jar)) {
-          state.main_state = 'walk_to_bank';
+          state.mainState = 'walk_to_bank';
           break;
         }
-        if (!isPlayerAtSnowyWhites()) {
-          logger(state, 'all', "stateManager: ".concat(state.main_state), 'Walking back to catch area.');
-          bot.walking.webWalkStart(scriptLocations.monsGratiaSnowyWhiteArea);
-          timeoutManager.add({
-            state,
-            conditionFunction: () => isPlayerAtSnowyWhites(),
-            maxWait: 200,
-            onFail: () => generalFunctions.handleFailure(state, "stateManager: ".concat(state.main_state), 'Unable to locate player at Mons Gratia after 200 ticks.')
-          });
-          break;
-        }
-        logger(state, 'debug', "stateManager: ".concat(state.main_state), 'Player is at start location.');
-        state.main_state = 'catch_snowy_knight';
+        if (!locationFunctions.webWalkTimeout(state, scriptLocations.monsGratiaSnowyKnightArea, 'Snowy Knight start location.', 200)) break;
+        state.mainState = 'catch_snowy_knight';
         break;
       }
     case 'catch_snowy_knight':
       {
         if (!bot.localPlayerIdle() || bot.walking.isWebWalking()) break;
-        if (!locationFunctions.isPlayerNearWorldPoint(scriptLocations.monsGratiaSnowyWhiteArea, 5)) state.main_state = 'walk_to_snowy_whites';
+        if (!locationFunctions.isPlayerNearWorldPoint(scriptLocations.monsGratiaSnowyKnightArea, 5)) state.mainState = 'walk_to_snowy_knights';
         if (!bot.inventory.containsId(itemIds.butterfly_jar)) {
-          state.main_state = 'walk_to_bank';
+          state.mainState = 'walk_to_bank';
           break;
         }
-        var snowyKnight = npcFunctions.getClosestNpc(npcIds.mons_gratia.snowy_knight);
+        var snowyKnight = npcFunctions.getClosestNpc([npcIds.mons_gratia.snowy_knight]);
         if (snowyKnight) {
-          var currentSnowyWhiteCount = getSnowyWhiteCount();
+          var currentSnowyKnightCount = bot.inventory.getQuantityOfId(itemIds.snowy_knight);
           bot.npcs.interactSupplied(snowyKnight, 'Catch');
           timeoutManager.add({
             state,
-            conditionFunction: () => getSnowyWhiteCount() > currentSnowyWhiteCount,
+            conditionFunction: () => bot.inventory.getQuantityOfId(itemIds.snowy_knight) > currentSnowyKnightCount,
             maxWait: 10
           });
         }
@@ -529,48 +569,38 @@ var stateManager = () => {
     case 'walk_to_bank':
       {
         if (!bot.localPlayerIdle() || bot.walking.isWebWalking()) break;
-        if (!isPlayerAtBank()) {
-          logger(state, 'all', "stateManager: ".concat(state.main_state), 'Walking to the Quetzacali Gorge bank.');
-          bot.walking.webWalkStart(scriptLocations.quetzacaliGorgeBank);
-          timeoutManager.add({
-            state,
-            conditionFunction: () => isPlayerAtBank(),
-            maxWait: 200,
-            onFail: () => generalFunctions.handleFailure(state, "stateManager: ".concat(state.main_state), 'Unable to find Quetzacali Gorge bank after 200 ticks.')
-          });
-          break;
-        }
-        state.main_state = 'open_bank';
+        if (!locationFunctions.webWalkTimeout(state, scriptLocations.quetzacaliGorgeBank, 'Quetzacali Gorge bank.', 200)) break;
+        state.mainState = 'open_bank';
         break;
       }
     case 'open_bank':
       {
         if (!bot.localPlayerIdle()) break;
         if (!bankFunctions.openBank(state)) break;
-        state.main_state = 'deposit_items';
+        state.mainState = 'deposit_items';
         break;
       }
     case 'deposit_items':
       {
         if (!bankFunctions.requireBankOpen(state, 'open_bank') || !bot.localPlayerIdle()) break;
-        if (!bankFunctions.depositAllItems(state, itemIds.snowy_knight, 'close_bank')) break;
-        state.main_state = 'check_bank_quantities';
+        if (!bankFunctions.depositAllItems(state, 0, 'close_bank')) break;
+        state.mainState = 'check_bank_quantities';
         break;
       }
     case 'check_bank_quantities':
       {
         if (!bankFunctions.requireBankOpen(state, 'open_bank') || !bot.localPlayerIdle()) break;
-        logger(state, 'debug', "stateManager: ".concat(state.main_state), 'Checking butterfly jar quantity.');
+        logger(state, 'debug', "stateManager: ".concat(state.mainState), 'Checking butterfly jar quantity.');
         if (bankFunctions.isQuantityLow(itemIds.butterfly_jar, 1)) throw new Error('Ran out of Butterfly jars.');
-        state.useStaminas && !bankFunctions.isQuantityLow(itemIds.stamina_potion_4, 1) ? state.main_state = 'withdraw_stamina' : state.main_state = 'withdraw_jars';
+        state.useStaminas && !bankFunctions.isQuantityLow(itemIds.stamina_potion_4, 1) ? state.mainState = 'withdraw_stamina' : state.mainState = 'withdraw_jars';
         break;
       }
     case 'withdraw_stamina':
       {
         if (!bankFunctions.requireBankOpen(state, 'open_bank') || !bot.localPlayerIdle() || bot.bank.isBanking()) break;
         var staminaIds = [itemIds.stamina_potion_1, itemIds.stamina_potion_2, itemIds.stamina_potion_3, itemIds.stamina_potion_4];
-        if (!bot.inventory.containsAnyIds(staminaIds) && bankFunctions.withdrawFirstExisting(state, staminaIds, 1)) break;
-        state.main_state = 'withdraw_jars';
+        if (!bot.inventory.containsAnyIds(staminaIds) && !bankFunctions.withdrawFirstExisting(state, staminaIds, 1)) break;
+        state.mainState = 'withdraw_jars';
         break;
       }
     case 'withdraw_jars':
@@ -580,12 +610,12 @@ var stateManager = () => {
           id: itemIds.butterfly_jar,
           quantity: 'all'
         }], 'close_bank')) break;
-        state.main_state = 'walk_to_snowy_whites';
+        state.mainState = 'walk_to_snowy_knights';
         break;
       }
     default:
       {
-        state.main_state = 'walk_to_snowy_whites';
+        state.mainState = 'walk_to_snowy_knights';
         break;
       }
   }

@@ -156,10 +156,7 @@ function _iterableToArrayLimit(r, l) {
       f = true,
       o = false;
     try {
-      if (i = (t = t.call(r)).next, 0 === l) {
-        if (Object(t) !== t) return;
-        f = !1;
-      } else for (; !(f = (e = i.call(t)).done) && (a.push(e.value), a.length !== l); f = !0);
+      if (i = (t = t.call(r)).next, 0 === l) ; else for (; !(f = (e = i.call(t)).done) && (a.push(e.value), a.length !== l); f = !0);
     } catch (r) {
       o = true, n = r;
     } finally {
@@ -197,12 +194,30 @@ function _unsupportedIterableToArray(r, a) {
 
 var utilityFunctions = {
   convertToTitleCase: stringToConvert => stringToConvert.toLowerCase().split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
-  coordsToWorldPoint: _ref => {
-    var _ref2 = _slicedToArray(_ref, 3),
-      x = _ref2[0],
-      y = _ref2[1],
-      z = _ref2[2];
-    return new net.runelite.api.coords.WorldPoint(x, y, z);
+  getObjectByValues: (array, match) => {
+    var item = array.find(object => Object.entries(match).every(_ref => {
+      var _ref2 = _slicedToArray(_ref, 2),
+        k = _ref2[0],
+        v = _ref2[1];
+      return object[k] === v;
+    }));
+    return item !== null && item !== void 0 ? item : false;
+  },
+  setArrObjValues: (array, match, setValues) => {
+    var object = array.find(item => Object.entries(match).every(_ref3 => {
+      var _ref4 = _slicedToArray(_ref3, 2),
+        k = _ref4[0],
+        v = _ref4[1];
+      return v !== false && item[k] === v;
+    }));
+    if (!object) return false;
+    Object.entries(setValues).forEach(_ref5 => {
+      var _ref6 = _slicedToArray(_ref5, 2),
+        k = _ref6[0],
+        v = _ref6[1];
+      object[k] = v;
+    });
+    return true;
   },
   randomInt: (min, max) => Math.floor(Math.random() * (max - min + 1)) + min
 };
@@ -279,11 +294,8 @@ var timeoutManager = {
       onFail: failCallback
     });
   },
-  tick(state) {
+  tick() {
     this.conditions = this.conditions.filter(condition => {
-      if (this.conditions.length === 0) {
-        state.stuck_count = 0;
-      }
       if (condition.ticksDelayed > 0) {
         condition.ticksDelayed--;
         return true;
@@ -315,36 +327,86 @@ var timeoutManager = {
 var generalFunctions = {
   gameTick: state => {
     try {
-      logger(state, 'debug', 'onGameTick', "Function start. Script game tick ".concat(state.gameTick));
+      logger(state, 'debug', 'onGameTick', "Script game tick ".concat(state.gameTick, " -------------------------"));
       state.gameTick++;
       if (state.debugEnabled && state.debugFullState) debugFunctions.stateDebugger(state);
-      if (state.stuck_count > 3) throw new Error("Fatal error with script. Failure origin: ".concat(state.failure_origin));
       if (state.timeout > 0) {
         state.timeout--;
         return false;
       }
-      timeoutManager.tick(state);
+      timeoutManager.tick();
       if (timeoutManager.isWaiting()) return false;
-      state.stuck_count = 0;
       if (state.antibanEnabled && antibanFunctions.afkTrigger(state)) return false;
       return true;
     } catch (error) {
-      logger(state, 'all', 'Script', error.toString());
-      bot.terminate();
+      var fatalMessage = error.toString();
+      logger(state, 'all', 'Script', fatalMessage);
+      generalFunctions.handleFailure(state, 'gameTick', fatalMessage);
       return false;
     }
   },
   handleFailure: (state, failureLocation, failureMessage, failResetState) => {
+    var failureKey = "".concat(failureLocation, " - ").concat(failureMessage);
     logger(state, 'debug', 'handleFailure', failureMessage);
-    state.failure_origin = "".concat(failureLocation, " - ").concat(failureMessage);
-    state.stuck_count++;
-    if (failResetState) state.main_state = failResetState;
+    state.failureCounts[failureKey] = state.lastFailureKey === failureKey ? (state.failureCounts[failureKey] || 1) + 1 : 1;
+    state.lastFailureKey = failureKey;
+    state.failureOrigin = failureKey;
+    if (state.failureCounts[failureKey] >= 3) {
+      logger(state, 'all', 'Script', "Fatal error: \"".concat(failureKey, "\" occurred 3x in a row."));
+      bot.terminate();
+      return;
+    }
+    if (failResetState) state.mainState = failResetState;
   },
   endScript: state => {
     bot.breakHandler.setBreakHandlerStatus(false);
     bot.printGameMessage("Terminating ".concat(state.scriptName, "."));
     bot.walking.webWalkCancel();
     bot.events.unregisterAll();
+  }
+};
+
+var inventoryFunctions = {
+  getFirstExistingItemId: itemIds => {
+    if (!bot.inventory.containsAnyIds(itemIds)) return undefined;
+    return itemIds.find(itemId => bot.inventory.containsId(itemId));
+  },
+  getRandomExistingItemId: itemIds => {
+    if (!bot.inventory.containsAnyIds(itemIds)) return undefined;
+    var existingItemIds = itemIds.filter(itemId => bot.inventory.containsId(itemId));
+    if (existingItemIds.length === 0) return undefined;
+    return existingItemIds[Math.floor(Math.random() * existingItemIds.length)];
+  },
+  checkQuantitiesMatch: (state, items) => {
+    logger(state, 'debug', "checkQuantitiesMatch", 'Checking inventory item quantities.');
+    var _iterator = _createForOfIteratorHelper(items),
+      _step;
+    try {
+      for (_iterator.s(); !(_step = _iterator.n()).done;) {
+        var item = _step.value;
+        if (bot.inventory.getQuantityOfId(item.itemId) !== item.quantity) return false;
+      }
+    } catch (err) {
+      _iterator.e(err);
+    } finally {
+      _iterator.f();
+    }
+    return true;
+  },
+  itemInInventoryTimeout: (state, itemId, failResetState) => {
+    if (!bot.inventory.containsId(itemId)) {
+      logger(state, 'debug', 'inventoryFunctions.itemInInventoryTimeout', "Item ID ".concat(itemId, " not in the inventory."));
+      timeoutManager.add({
+        state,
+        conditionFunction: () => bot.inventory.containsId(itemId),
+        initialTimeout: 1,
+        maxWait: 10,
+        onFail: () => generalFunctions.handleFailure(state, 'inventoryFunctions.itemInInventoryTimeout', "Item ID ".concat(itemId, " not in inventory after 10 ticks."), failResetState)
+      });
+      return false;
+    }
+    logger(state, 'debug', 'inventoryFunctions.itemInInventoryTimeout', "Item ID ".concat(itemId, " is in the inventory."));
+    return true;
   }
 };
 
@@ -381,14 +443,14 @@ var bankFunctions = {
   },
   requireBankOpen: (state, fallbackState) => {
     if (!bot.bank.isOpen()) {
-      state.main_state = fallbackState;
+      state.mainState = fallbackState;
       return false;
     }
     return true;
   },
   requireBankClosed: (state, fallbackState) => {
     if (bot.bank.isOpen()) {
-      state.main_state = fallbackState;
+      state.mainState = fallbackState;
       return false;
     }
     return true;
@@ -399,67 +461,39 @@ var bankFunctions = {
     var _iterator = _createForOfIteratorHelper(items),
       _step;
     try {
-      var _loop = function _loop() {
-          var item = _step.value;
-          if (!bot.inventory.containsId(item.id)) {
-            logger(state, 'debug', 'bankFunctions.withdrawMissingItems', "Withdrawing item ID ".concat(item.id, " with quantity ").concat(item.quantity));
-            item.quantity == 'all' ? bot.bank.withdrawAllWithId(item.id) : bot.bank.withdrawQuantityWithId(item.id, item.quantity);
-            timeoutManager.add({
-              state,
-              conditionFunction: () => bot.inventory.containsId(item.id),
-              initialTimeout: 1,
-              maxWait: 10,
-              onFail: () => generalFunctions.handleFailure(state, 'bankFunctions.withdrawMissingItems', "Failed to withdraw item ID ".concat(item.id, " after 10 ticks."), failResetState)
-            });
-            return {
-              v: true
-            };
-          }
-        },
-        _ret;
       for (_iterator.s(); !(_step = _iterator.n()).done;) {
-        _ret = _loop();
-        if (_ret) return _ret.v;
+        var item = _step.value;
+        if (!bot.inventory.containsId(item.id)) {
+          logger(state, 'debug', 'bankFunctions.withdrawMissingItems', "Withdrawing item ID ".concat(item.id, " with quantity ").concat(item.quantity));
+          item.quantity == 'all' ? bot.bank.withdrawAllWithId(item.id) : bot.bank.withdrawQuantityWithId(item.id, item.quantity);
+          if (!inventoryFunctions.itemInInventoryTimeout(state, item.id, failResetState)) return false;
+        }
       }
     } catch (err) {
       _iterator.e(err);
     } finally {
       _iterator.f();
     }
-    return false;
+    return true;
   },
   withdrawFirstExisting: (state, itemIds, quantity, failResetState) => {
     var _iterator2 = _createForOfIteratorHelper(itemIds),
       _step2;
     try {
-      var _loop2 = function _loop2() {
-          var itemId = _step2.value;
-          if (bot.bank.getQuantityOfId(itemId) >= quantity) {
-            logger(state, 'debug', 'bankFunctions.withdrawFirstExisting', "Withdrawing item ID ".concat(itemId, " with quantity ").concat(quantity));
-            bot.bank.withdrawQuantityWithId(itemId, quantity);
-            timeoutManager.add({
-              state,
-              conditionFunction: () => bot.inventory.containsId(itemId),
-              initialTimeout: 1,
-              maxWait: 10,
-              onFail: () => generalFunctions.handleFailure(state, 'bankFunctions.withdrawMissingItems', "Failed to withdraw item ID ".concat(itemId, " after 10 ticks."), failResetState)
-            });
-            return {
-              v: true
-            };
-          }
-        },
-        _ret2;
       for (_iterator2.s(); !(_step2 = _iterator2.n()).done;) {
-        _ret2 = _loop2();
-        if (_ret2) return _ret2.v;
+        var itemId = _step2.value;
+        if (bot.bank.getQuantityOfId(itemId) >= quantity) {
+          logger(state, 'debug', 'bankFunctions.withdrawFirstExisting', "Withdrawing item ID ".concat(itemId, " with quantity ").concat(quantity));
+          bot.bank.withdrawQuantityWithId(itemId, quantity);
+          if (!inventoryFunctions.itemInInventoryTimeout(state, itemId, failResetState)) return false;
+        }
       }
     } catch (err) {
       _iterator2.e(err);
     } finally {
       _iterator2.f();
     }
-    return false;
+    return true;
   },
   depositAllItems: (state, itemId, failResetState) => {
     var currentEmptySlots = bot.inventory.getEmptySlots();
@@ -676,49 +710,20 @@ var createUi = state => {
   return frame;
 };
 
-var inventoryFunctions = {
-  getFirstExistingItemId: itemIds => {
-    if (!bot.inventory.containsAnyIds(itemIds)) return undefined;
-    return itemIds.find(itemId => bot.inventory.containsId(itemId));
-  },
-  getRandomExistingItemId: itemIds => {
-    if (!bot.inventory.containsAnyIds(itemIds)) return undefined;
-    var existingItemIds = itemIds.filter(itemId => bot.inventory.containsId(itemId));
-    if (existingItemIds.length === 0) return undefined;
-    return existingItemIds[Math.floor(Math.random() * existingItemIds.length)];
-  },
-  checkQuantitiesMatch: (state, items) => {
-    logger(state, 'debug', "checkQuantitiesMatch", 'Checking inventory item quantities.');
-    var _iterator = _createForOfIteratorHelper(items),
-      _step;
-    try {
-      for (_iterator.s(); !(_step = _iterator.n()).done;) {
-        var item = _step.value;
-        if (bot.inventory.getQuantityOfId(item.itemId) !== item.quantity) return false;
-      }
-    } catch (err) {
-      _iterator.e(err);
-    } finally {
-      _iterator.f();
-    }
-    return true;
-  }
-};
-
 var widgetFunctions = {
   widgetExists: widgetId => Boolean(client.getWidget(widgetId)),
-  interactWithWidget: (state, widgetData) => {
-    if (!client.getWidget(widgetData.packed_widget_id)) {
+  widgetTimeout: (state, widgetData, interactWhenFound) => {
+    if (!widgetFunctions.widgetExists(widgetData.packed_widget_id)) {
       timeoutManager.add({
         state,
-        conditionFunction: () => client.getWidget(widgetData.packed_widget_id) !== null,
+        conditionFunction: () => widgetFunctions.widgetExists(widgetData.packed_widget_id) !== null,
         initialTimeout: 1,
         maxWait: 10,
-        onFail: () => generalFunctions.handleFailure(state, 'widgetFunctions.interactWithWidget', "Widget ID ".concat(widgetData.packed_widget_id, " not visible after 10 ticks"))
+        onFail: () => generalFunctions.handleFailure(state, 'widgetFunctions.widgetTimeout', "Widget ID ".concat(widgetData.packed_widget_id, " not visible after 10 ticks"))
       });
       return false;
     }
-    bot.widgets.interactSpecifiedWidget(widgetData.packed_widget_id, widgetData.identifier, widgetData.opcode, widgetData.p0);
+    interactWhenFound && bot.widgets.interactSpecifiedWidget(widgetData.packed_widget_id, widgetData.identifier, widgetData.opcode, widgetData.p0);
     return true;
   }
 };
@@ -728,11 +733,12 @@ var state = {
   antibanTriggered: false,
   debugEnabled: false,
   debugFullState: false,
-  failure_origin: '',
+  failureCounts: {},
+  failureOrigin: '',
   gameTick: 0,
-  main_state: 'open_bank',
+  lastFailureKey: '',
+  mainState: 'open_bank',
   scriptName: '[Stark] Item Combiner',
-  stuck_count: 0,
   timeout: 0,
   scriptInitialised: false,
   uiCompleted: false,
@@ -758,7 +764,7 @@ var onGameTick = () => {
       return;
     }
     if (!generalFunctions.gameTick(state)) return;
-    if (!bot.bank.isBanking() && bot.localPlayerIdle() && !bot.walking.isWebWalking() && state.main_state == 'open_bank') bot.breakHandler.setBreakHandlerStatus(true);
+    if (!bot.bank.isBanking() && bot.localPlayerIdle() && !bot.walking.isWebWalking() && state.mainState == 'open_bank') bot.breakHandler.setBreakHandlerStatus(true);
     stateManager();
   } catch (error) {
     logger(state, 'all', 'Script', error.toString());
@@ -773,15 +779,15 @@ var getGuiItemCombinationData = () => {
   state.itemCombinationData = itemCombination;
 };
 var stateManager = () => {
-  logger(state, 'debug', "stateManager (".concat(state.main_state, ")"), "Function start.");
+  logger(state, 'debug', "stateManager", "".concat(state.mainState));
   var itemCombinationData = state.itemCombinationData;
   if (!itemCombinationData) throw new Error('Item combination not initialized');
-  switch (state.main_state) {
+  switch (state.mainState) {
     case 'open_bank':
       {
         if (!bot.localPlayerIdle()) break;
         if (!bankFunctions.openBank(state)) break;
-        state.main_state = 'deposit_items';
+        state.mainState = 'deposit_items';
         break;
       }
     case 'deposit_items':
@@ -791,22 +797,22 @@ var stateManager = () => {
         if (itemCombinationData.deposit_all || !state.startDepositAllCompleted) depositItemId = 0;
         if (!bankFunctions.depositAllItems(state, depositItemId, 'close_bank')) break;
         state.startDepositAllCompleted = true;
-        state.main_state = 'check_bank_quantities';
+        state.mainState = 'check_bank_quantities';
         break;
       }
     case 'check_bank_quantities':
       {
         if (!bankFunctions.requireBankOpen(state, 'open_bank') || !bot.localPlayerIdle()) break;
-        logger(state, 'debug', "stateManager: ".concat(state.main_state), 'Checking bank item quantities.');
+        logger(state, 'debug', "stateManager: ".concat(state.mainState), 'Checking bank item quantities.');
         if (bankFunctions.anyQuantitiyLow(itemCombinationData.items)) throw new Error('Ran out of items to combine.');
-        state.main_state = 'withdraw_items';
+        state.mainState = 'withdraw_items';
         break;
       }
     case 'withdraw_items':
       {
         if (!bankFunctions.requireBankOpen(state, 'open_bank') || !bot.localPlayerIdle() || bot.bank.isBanking()) break;
-        if (bankFunctions.withdrawMissingItems(state, itemCombinationData.items, 'close_bank')) break;
-        state.main_state = 'validate_inventory_quantities';
+        if (!bankFunctions.withdrawMissingItems(state, itemCombinationData.items, 'close_bank')) break;
+        state.mainState = 'validate_inventory_quantities';
         break;
       }
     case 'validate_inventory_quantities':
@@ -816,39 +822,39 @@ var stateManager = () => {
           itemId: item.id,
           quantity: item.quantity
         })))) {
-          generalFunctions.handleFailure(state, "stateManager: ".concat(state.main_state), 'Inventory quantities do not match required quantities.', 'open_bank');
+          generalFunctions.handleFailure(state, "stateManager: ".concat(state.mainState), 'Inventory quantities do not match required quantities.', 'open_bank');
           break;
         }
-        state.main_state = 'close_bank';
+        state.mainState = 'close_bank';
         break;
       }
     case 'close_bank':
       {
         if (!bot.localPlayerIdle()) break;
         if (!bankFunctions.closeBank(state)) break;
-        state.main_state = 'item_interact';
+        state.mainState = 'item_interact';
         break;
       }
     case 'item_interact':
       {
         if (!bankFunctions.requireBankClosed(state, 'close_bank') || !bot.localPlayerIdle()) break;
         if (!bot.inventory.containsAllIds(itemCombinationData.items.map(item => item.id))) {
-          generalFunctions.handleFailure(state, "stateManager: ".concat(state.main_state), 'Inventory does not contain the correct items.', 'open_bank');
+          generalFunctions.handleFailure(state, "stateManager: ".concat(state.mainState), 'Inventory does not contain the correct items.', 'open_bank');
           break;
         }
         var item1 = itemCombinationData.items[0];
         var item2 = itemCombinationData.items[1];
         bot.inventory.itemOnItemWithIds(item1.id, item2.id);
         var widgetData = itemCombinationData.make_widget_data;
-        if (widgetData && !widgetFunctions.interactWithWidget(state, widgetData)) break;
+        if (widgetData && !widgetFunctions.widgetTimeout(state, widgetData, true)) break;
         state.timeout = itemCombinationData.timeout;
-        logger(state, 'debug', "stateManager: ".concat(state.main_state), "Combining ".concat(utilityFunctions.convertToTitleCase(item1.name), " with ").concat(utilityFunctions.convertToTitleCase(item2.name), ". Timeout: ").concat(itemCombinationData.timeout, "."));
-        state.main_state = 'open_bank';
+        logger(state, 'debug', "stateManager: ".concat(state.mainState), "Combining ".concat(utilityFunctions.convertToTitleCase(item1.name), " with ").concat(utilityFunctions.convertToTitleCase(item2.name), ". Timeout: ").concat(itemCombinationData.timeout, "."));
+        state.mainState = 'open_bank';
         break;
       }
     default:
       {
-        state.main_state = 'open_bank';
+        state.mainState = 'open_bank';
         break;
       }
   }

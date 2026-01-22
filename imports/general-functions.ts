@@ -11,32 +11,30 @@ import {State} from './types.js';
 export const generalFunctions = {
 
     // onGameTick general function.
-    gameTick: (
-        state: State
-    ): boolean => {
+    gameTick: (state: State): boolean => {
         try {
-            logger(state, 'debug', 'onGameTick', `Function start. Script game tick ${state.gameTick}`);
+            logger(state, 'debug', 'onGameTick', `Script game tick ${state.gameTick} -------------------------`);
             state.gameTick++;
+
+            // Debug
             if (state.debugEnabled && state.debugFullState) debugFunctions.stateDebugger(state);
 
-            // Script stuck check.
-            if (state.stuck_count > 3) throw new Error(`Fatal error with script. Failure origin: ${state.failure_origin}`);
-
-            // Timeout logic.
+            // Timeout logic
             if (state.timeout > 0) {
                 state.timeout--;
                 return false;
             }
-            timeoutManager.tick(state);
+            timeoutManager.tick();
             if (timeoutManager.isWaiting()) return false;
-            state.stuck_count = 0;
 
-            // Antiban AFK and break logic.
+            // Antiban AFK and break logic
             if (state.antibanEnabled && antibanFunctions.afkTrigger(state)) return false;
+
             return true;
         } catch (error) {
-            logger(state, 'all', 'Script', (error as Error).toString());
-            bot.terminate();
+            const fatalMessage = (error as Error).toString();
+            logger(state, 'all', 'Script', fatalMessage);
+            generalFunctions.handleFailure(state, 'gameTick', fatalMessage);
             return false;
         }
     },
@@ -48,10 +46,27 @@ export const generalFunctions = {
         failureMessage: string,
         failResetState?: string
     ) => {
+        const failureKey = `${failureLocation} - ${failureMessage}`;
+        
+        // Log the failure
         logger(state, 'debug', 'handleFailure', failureMessage);
-        state.failure_origin = `${failureLocation} - ${failureMessage}`
-        state.stuck_count++
-        if (failResetState) state.main_state = failResetState
+
+        // Increment consecutive failure count for this exact failure
+        state.failureCounts[failureKey] = state.lastFailureKey === failureKey ? (state.failureCounts[failureKey] || 1) + 1 : 1;
+
+        // Remember this failure for next tick
+        state.lastFailureKey = failureKey;
+        state.failureOrigin = failureKey;
+
+        // Fatal exit if the same failure occurs 3 times consecutively
+        if (state.failureCounts[failureKey] >= 3) {
+            logger(state, 'all', 'Script', `Fatal error: "${failureKey}" occurred 3x in a row.`);
+            bot.terminate();
+            return;
+        }
+
+        // Reset mainState if requested
+        if (failResetState) state.mainState = failResetState;
     },
 
     // Code to execute after `onEnd()`.
