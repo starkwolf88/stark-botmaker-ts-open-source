@@ -8,7 +8,7 @@ var locationCoords = {
   falador: {
     herb_patch: [3056, 3310, 0]},
   farming_guild: {
-    herb_patch: [1240, 3730, 0]
+    herb_patch: [1237, 3732, 0]
   },
   hosidious: {
     herb_patch: [1740, 3550, 0]
@@ -332,6 +332,14 @@ var generalFunctions = {
 };
 
 var inventoryFunctions = {
+  dropItem: (state, itemId, failResetState) => {
+    if (bot.inventory.containsId(itemId)) {
+      bot.inventory.interactWithIds([itemId], ['Drop']);
+      inventoryFunctions.itemInventoryTimeout.absent(state, itemId, failResetState);
+      return false;
+    }
+    return true;
+  },
   getFirstExistingItemId: itemIds => {
     if (!bot.inventory.containsAnyIds(itemIds)) return undefined;
     return itemIds.find(itemId => bot.inventory.containsId(itemId));
@@ -358,30 +366,38 @@ var inventoryFunctions = {
     }
     return true;
   },
-  itemInInventoryTimeout: (state, itemId, failResetState) => {
-    if (!bot.inventory.containsId(itemId)) {
-      logger(state, 'debug', 'inventoryFunctions.itemInInventoryTimeout', "Item ID ".concat(itemId, " not in the inventory."));
-      timeoutManager.add({
-        state,
-        conditionFunction: () => bot.inventory.containsId(itemId),
-        initialTimeout: 1,
-        maxWait: 10,
-        onFail: () => generalFunctions.handleFailure(state, 'inventoryFunctions.itemInInventoryTimeout', "Item ID ".concat(itemId, " not in inventory after 10 ticks."), failResetState)
-      });
-      return false;
-    }
-    logger(state, 'debug', 'inventoryFunctions.itemInInventoryTimeout', "Item ID ".concat(itemId, " is in the inventory."));
-    return true;
+  itemInventoryTimeout: {
+    present: (state, itemId, failResetState) => itemInventoryTimeoutCore(state, itemId, failResetState, true),
+    absent: (state, itemId, failResetState) => itemInventoryTimeoutCore(state, itemId, failResetState, false)
   }
 };
+function itemInventoryTimeoutCore(state, itemId, failResetState) {
+  var waitForPresence = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : true;
+  var inInventory = bot.inventory.containsId(itemId);
+  var shouldPass = waitForPresence ? inInventory : !inInventory;
+  if (!shouldPass) {
+    logger(state, 'debug', 'inventoryFunctions.itemInventoryTimeout', "Item ID ".concat(itemId, " ").concat(waitForPresence ? 'not in' : 'still in', " inventory."));
+    timeoutManager.add({
+      state,
+      conditionFunction: () => waitForPresence ? bot.inventory.containsId(itemId) : !bot.inventory.containsId(itemId),
+      initialTimeout: 1,
+      maxWait: 10,
+      onFail: () => generalFunctions.handleFailure(state, 'inventoryFunctions.itemInventoryTimeout', "Item ID ".concat(itemId, " ").concat(waitForPresence ? 'not in' : 'still in', " inventory after 10 ticks."), failResetState)
+    });
+    return false;
+  }
+  logger(state, 'debug', 'inventoryFunctions.itemInventoryTimeout', "Item ID ".concat(itemId, " is ").concat(waitForPresence ? 'in' : 'not in', " inventory."));
+  return true;
+}
 
 var itemIds = {
-  bottomlessBucketUltraId: 22997,
+  bucket: 1925,
   spade: 952};
 var itemIdGroups = {
   herb_seeds: [5291, 5292, 5293, 5294, 5295, 5296, 5297, 5298, 5299, 5300, 5301, 5302, 5303, 5304, 30088],
   grimy_herbs: [199, 201, 203, 205, 207, 209, 211, 213, 215, 217, 219, 2485, 3049, 3051, 30094],
-  herbs: [249, 251, 253, 255, 257, 259, 261, 263, 265, 267, 269, 2481, 2998, 3000, 30097]
+  herbs: [249, 251, 253, 255, 257, 259, 261, 263, 265, 267, 269, 2481, 2998, 3000, 30097],
+  compost: [22997, 6034, 21483]
 };
 
 var locationFunctions = {
@@ -397,8 +413,9 @@ var locationFunctions = {
     var tileThreshold = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 3;
     return locationFunctions.localPlayerDistanceFromWorldPoint(worldPoint) <= tileThreshold;
   },
-  webWalkTimeout: (state, worldPoint, targetDescription, maxWait) => {
-    var isPlayerAtLocation = () => locationFunctions.isPlayerNearWorldPoint(worldPoint);
+  webWalkTimeout: function webWalkTimeout(state, worldPoint, targetDescription, maxWait) {
+    var targetDistance = arguments.length > 4 && arguments[4] !== undefined ? arguments[4] : 3;
+    var isPlayerAtLocation = () => locationFunctions.isPlayerNearWorldPoint(worldPoint, targetDistance);
     if (!isPlayerAtLocation() && !bot.walking.isWebWalking()) {
       logger(state, 'all', 'webWalkTimeout', "Web walking to ".concat(targetDescription));
       bot.walking.webWalkStart(worldPoint);
@@ -618,6 +635,7 @@ var onGameTick = () => {
 var onEnd = () => generalFunctions.endScript(state);
 var stateManager = () => {
   logger(state, 'debug', "stateManager", "".concat(state.mainState));
+  if (!inventoryFunctions.dropItem(state, itemIds.bucket)) return;
   switch (state.mainState) {
     case 'assign_herb_patch':
       {
@@ -645,23 +663,7 @@ var stateManager = () => {
           generalFunctions.handleFailure(state, "stateManager (".concat(state.mainState, ")"), 'Could not determine which herb patch is in progress', 'assign_herb_patch');
           break;
         }
-        locationFunctions.webWalkTimeout(state, herbPatchInProgress.worldPoint, "".concat(herbPatchInProgress.name), 200);
-        state.mainState = 'note_herbs';
-        break;
-      }
-    case 'note_herbs':
-      {
-        if (!bot.localPlayerIdle()) break;
-        if (bot.inventory.containsAnyIds(itemIdGroups.grimy_herbs.concat(itemIdGroups.herbs))) {
-          var toolLeprechaun = npcFunctions.getClosestNpc(npcIdGroups.tool_leprechaun);
-          if (!toolLeprechaun) {
-            generalFunctions.handleFailure(state, "stateManager (".concat(state.mainState, ")"), 'Could not locate Tool Leprechaun', 'walk_to_herb_patch');
-            break;
-          }
-          var randomHerbId = inventoryFunctions.getRandomExistingItemId(itemIdGroups.grimy_herbs.concat(itemIdGroups.herbs));
-          randomHerbId && bot.inventory.itemOnNpcWithIds(randomHerbId, toolLeprechaun);
-          break;
-        }
+        locationFunctions.webWalkTimeout(state, herbPatchInProgress.worldPoint, "".concat(herbPatchInProgress.name, " herb patch."), 200, 10);
         state.mainState = 'withdraw_tools';
         break;
       }
@@ -708,13 +710,19 @@ var stateManager = () => {
             }
           case 'Pick':
             {
+              if (bot.inventory.isFull()) {
+                state.mainState = 'note_herbs';
+                break;
+              }
               bot.objects.interactObject('Herbs', 'Pick');
               break;
             }
           default:
             {
               if (!_herbPatchInProgress.composted) {
-                bot.inventory.itemOnObjectWithIds(itemIds.bottomlessBucketUltraId, herbPatchTileObject);
+                var compostIdToUse = inventoryFunctions.getFirstExistingItemId(itemIdGroups.compost);
+                if (!compostIdToUse) throw new Error('Ran out of compost.');
+                bot.inventory.itemOnObjectWithIds(compostIdToUse, herbPatchTileObject);
                 _herbPatchInProgress.composted = true;
                 state.timeout = 7;
                 break;
@@ -727,6 +735,22 @@ var stateManager = () => {
               break;
             }
         }
+        break;
+      }
+    case 'note_herbs':
+      {
+        if (!bot.localPlayerIdle()) break;
+        if (bot.inventory.containsAnyIds(itemIdGroups.grimy_herbs.concat(itemIdGroups.herbs))) {
+          var toolLeprechaun = npcFunctions.getClosestNpc(npcIdGroups.tool_leprechaun);
+          if (!toolLeprechaun) {
+            generalFunctions.handleFailure(state, "stateManager (".concat(state.mainState, ")"), 'Could not locate Tool Leprechaun', 'walk_to_herb_patch');
+            break;
+          }
+          var randomHerbId = inventoryFunctions.getRandomExistingItemId(itemIdGroups.grimy_herbs.concat(itemIdGroups.herbs));
+          randomHerbId && bot.inventory.itemOnNpcWithIds(randomHerbId, toolLeprechaun);
+          break;
+        }
+        state.mainState = 'herb_patch_interactions';
         break;
       }
     default:
@@ -753,7 +777,7 @@ var exchangeToolLeprechaun = withdrawDeposit => {
     if (!widgetFunctions.widgetTimeout(state, widgetData.farming.tool_leprechaun[withdrawDeposit].spade)) return false;
   }
   Object.values(widgetData.farming.tool_leprechaun[withdrawDeposit]).forEach(w => bot.widgets.interactSpecifiedWidget(w.packed_widget_id, w.identifier, w.opcode, w.p0));
-  if (withdrawDeposit == 'withdraw' && !inventoryFunctions.itemInInventoryTimeout(state, itemIds.spade)) return false;
+  if (withdrawDeposit == 'withdraw' && !inventoryFunctions.itemInventoryTimeout.present(state, itemIds.spade)) return false;
   return true;
 };
 

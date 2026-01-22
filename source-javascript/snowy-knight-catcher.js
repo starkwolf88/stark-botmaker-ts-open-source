@@ -307,6 +307,14 @@ var generalFunctions = {
 };
 
 var inventoryFunctions = {
+  dropItem: (state, itemId, failResetState) => {
+    if (bot.inventory.containsId(itemId)) {
+      bot.inventory.interactWithIds([itemId], ['Drop']);
+      inventoryFunctions.itemInventoryTimeout.absent(state, itemId, failResetState);
+      return false;
+    }
+    return true;
+  },
   getFirstExistingItemId: itemIds => {
     if (!bot.inventory.containsAnyIds(itemIds)) return undefined;
     return itemIds.find(itemId => bot.inventory.containsId(itemId));
@@ -333,22 +341,29 @@ var inventoryFunctions = {
     }
     return true;
   },
-  itemInInventoryTimeout: (state, itemId, failResetState) => {
-    if (!bot.inventory.containsId(itemId)) {
-      logger(state, 'debug', 'inventoryFunctions.itemInInventoryTimeout', "Item ID ".concat(itemId, " not in the inventory."));
-      timeoutManager.add({
-        state,
-        conditionFunction: () => bot.inventory.containsId(itemId),
-        initialTimeout: 1,
-        maxWait: 10,
-        onFail: () => generalFunctions.handleFailure(state, 'inventoryFunctions.itemInInventoryTimeout', "Item ID ".concat(itemId, " not in inventory after 10 ticks."), failResetState)
-      });
-      return false;
-    }
-    logger(state, 'debug', 'inventoryFunctions.itemInInventoryTimeout', "Item ID ".concat(itemId, " is in the inventory."));
-    return true;
+  itemInventoryTimeout: {
+    present: (state, itemId, failResetState) => itemInventoryTimeoutCore(state, itemId, failResetState, true),
+    absent: (state, itemId, failResetState) => itemInventoryTimeoutCore(state, itemId, failResetState, false)
   }
 };
+function itemInventoryTimeoutCore(state, itemId, failResetState) {
+  var waitForPresence = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : true;
+  var inInventory = bot.inventory.containsId(itemId);
+  var shouldPass = waitForPresence ? inInventory : !inInventory;
+  if (!shouldPass) {
+    logger(state, 'debug', 'inventoryFunctions.itemInventoryTimeout', "Item ID ".concat(itemId, " ").concat(waitForPresence ? 'not in' : 'still in', " inventory."));
+    timeoutManager.add({
+      state,
+      conditionFunction: () => waitForPresence ? bot.inventory.containsId(itemId) : !bot.inventory.containsId(itemId),
+      initialTimeout: 1,
+      maxWait: 10,
+      onFail: () => generalFunctions.handleFailure(state, 'inventoryFunctions.itemInventoryTimeout', "Item ID ".concat(itemId, " ").concat(waitForPresence ? 'not in' : 'still in', " inventory after 10 ticks."), failResetState)
+    });
+    return false;
+  }
+  logger(state, 'debug', 'inventoryFunctions.itemInventoryTimeout', "Item ID ".concat(itemId, " is ").concat(waitForPresence ? 'in' : 'not in', " inventory."));
+  return true;
+}
 
 var bankFunctions = {
   openBank: state => {
@@ -397,6 +412,10 @@ var bankFunctions = {
   },
   isQuantityLow: (itemId, quantity) => bot.bank.getQuantityOfId(itemId) < quantity,
   anyQuantitiyLow: items => items.some(item => bankFunctions.isQuantityLow(item.id, item.quantity)),
+  depositItemsTimeout: {
+    all: (state, failResetState) => depositItemsTimeoutBase(state, undefined, failResetState),
+    some: (state, itemId, failResetState) => depositItemsTimeoutBase(state, itemId, failResetState)
+  },
   withdrawMissingItems: (state, items, failResetState) => {
     var _iterator = _createForOfIteratorHelper(items),
       _step;
@@ -406,7 +425,7 @@ var bankFunctions = {
         if (!bot.inventory.containsId(item.id)) {
           logger(state, 'debug', 'bankFunctions.withdrawMissingItems', "Withdrawing item ID ".concat(item.id, " with quantity ").concat(item.quantity));
           item.quantity == 'all' ? bot.bank.withdrawAllWithId(item.id) : bot.bank.withdrawQuantityWithId(item.id, item.quantity);
-          if (!inventoryFunctions.itemInInventoryTimeout(state, item.id, failResetState)) return false;
+          if (!inventoryFunctions.itemInventoryTimeout.present(state, item.id, failResetState)) return false;
         }
       }
     } catch (err) {
@@ -425,7 +444,7 @@ var bankFunctions = {
         if (bot.bank.getQuantityOfId(itemId) >= quantity) {
           logger(state, 'debug', 'bankFunctions.withdrawFirstExisting', "Withdrawing item ID ".concat(itemId, " with quantity ").concat(quantity));
           bot.bank.withdrawQuantityWithId(itemId, quantity);
-          if (!inventoryFunctions.itemInInventoryTimeout(state, itemId, failResetState)) return false;
+          if (!inventoryFunctions.itemInventoryTimeout.present(state, itemId, failResetState)) return false;
         }
       }
     } catch (err) {
@@ -434,24 +453,24 @@ var bankFunctions = {
       _iterator2.f();
     }
     return true;
-  },
-  depositAllItems: (state, itemId, failResetState) => {
-    var currentEmptySlots = bot.inventory.getEmptySlots();
-    if (currentEmptySlots == 28) return true;
-    if (!itemId || itemId && bot.inventory.containsId(itemId)) {
-      logger(state, 'debug', 'bankFunctions.depositAllItems', "Depositing ".concat(itemId ? "item ID ".concat(itemId) : 'all items'));
-      itemId ? bot.bank.depositAllWithId(itemId) : bot.bank.depositAll();
-      timeoutManager.add({
-        state,
-        conditionFunction: () => currentEmptySlots < bot.inventory.getEmptySlots(),
-        initialTimeout: 1,
-        maxWait: 10,
-        onFail: () => generalFunctions.handleFailure(state, 'bankFunctions.depositAllItems', "Failed to deposit ".concat(itemId ? "item ID ".concat(itemId) : 'all items', " after 10 ticks."), failResetState)
-      });
-      return false;
-    }
-    return true;
   }
+};
+var depositItemsTimeoutBase = (state, itemId, failResetState) => {
+  var currentEmptySlots = bot.inventory.getEmptySlots();
+  if (currentEmptySlots == 28) return true;
+  if (!itemId || itemId && bot.inventory.containsId(itemId)) {
+    logger(state, 'debug', 'bankFunctions.depositItemsTimeout', "Depositing ".concat(itemId ? "item ID ".concat(itemId) : 'all items'));
+    itemId ? bot.bank.depositAllWithId(itemId) : bot.bank.depositAll();
+    timeoutManager.add({
+      state,
+      conditionFunction: () => currentEmptySlots < bot.inventory.getEmptySlots(),
+      initialTimeout: 1,
+      maxWait: 10,
+      onFail: () => generalFunctions.handleFailure(state, 'bankFunctions.depositItemsTimeout', "Failed to deposit ".concat(itemId ? "item ID ".concat(itemId) : 'all items', " after 10 ticks."), failResetState)
+    });
+    return false;
+  }
+  return true;
 };
 
 var locationFunctions = {
@@ -467,10 +486,11 @@ var locationFunctions = {
     var tileThreshold = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 3;
     return locationFunctions.localPlayerDistanceFromWorldPoint(worldPoint) <= tileThreshold;
   },
-  webWalkTimeout: (state, worldPoint, targetDescription, maxWait) => {
-    var isPlayerAtLocation = () => locationFunctions.isPlayerNearWorldPoint(worldPoint);
+  webWalkTimeout: function webWalkTimeout(state, worldPoint, targetDescription, maxWait) {
+    var targetDistance = arguments.length > 4 && arguments[4] !== undefined ? arguments[4] : 3;
+    var isPlayerAtLocation = () => locationFunctions.isPlayerNearWorldPoint(worldPoint, targetDistance);
     if (!isPlayerAtLocation() && !bot.walking.isWebWalking()) {
-      logger(state, 'all', 'webWalkTimeout', "Walking to ".concat(targetDescription));
+      logger(state, 'all', 'webWalkTimeout', "Web walking to ".concat(targetDescription));
       bot.walking.webWalkStart(worldPoint);
       timeoutManager.add({
         state,
@@ -583,7 +603,7 @@ var stateManager = () => {
     case 'deposit_items':
       {
         if (!bankFunctions.requireBankOpen(state, 'open_bank') || !bot.localPlayerIdle()) break;
-        if (!bankFunctions.depositAllItems(state, 0, 'close_bank')) break;
+        if (!bankFunctions.depositItemsTimeout.all(state, 'close_bank')) break;
         state.mainState = 'check_bank_quantities';
         break;
       }
