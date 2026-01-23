@@ -562,7 +562,7 @@ var stateManager = () => {
           state.mainState = 'walk_to_bank';
           break;
         }
-        if (!locationFunctions.webWalkTimeout(state, scriptLocations.monsGratiaSnowyKnightArea, 'Snowy Knight start location.', 200)) break;
+        if (!locationFunctions.webWalkTimeout(state, scriptLocations.monsGratiaSnowyKnightArea, 'Snowy Knight start location.', 200, 5)) break;
         state.mainState = 'catch_snowy_knight';
         break;
       }

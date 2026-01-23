@@ -533,12 +533,12 @@ var widgetData = {
 };
 
 var widgetFunctions = {
-  widgetExists: widgetId => Boolean(client.getWidget(widgetId)),
+  widgetExists: widgetData => Boolean(client.getWidget(widgetData.packed_widget_id)),
   widgetTimeout: (state, widgetData, interactWhenFound) => {
-    if (!widgetFunctions.widgetExists(widgetData.packed_widget_id)) {
+    if (!widgetFunctions.widgetExists(widgetData)) {
       timeoutManager.add({
         state,
-        conditionFunction: () => widgetFunctions.widgetExists(widgetData.packed_widget_id) !== null,
+        conditionFunction: () => widgetFunctions.widgetExists(widgetData) !== null,
         initialTimeout: 1,
         maxWait: 10,
         onFail: () => generalFunctions.handleFailure(state, 'widgetFunctions.widgetTimeout', "Widget ID ".concat(widgetData.packed_widget_id, " not visible after 10 ticks"))
@@ -772,9 +772,10 @@ var exchangeToolLeprechaun = withdrawDeposit => {
     generalFunctions.handleFailure(state, "stateManager (".concat(state.mainState, ")"), 'Could not locate Tool Leprechaun', 'walk_to_herb_patch');
     return false;
   }
-  if (!widgetFunctions.widgetExists(widgetData.farming.tool_leprechaun[withdrawDeposit].spade.packed_widget_id)) {
+  var toolLeprechaunInterface = widgetData.farming.tool_leprechaun[withdrawDeposit].spade;
+  if (!widgetFunctions.widgetExists(toolLeprechaunInterface)) {
     bot.npcs.interactSupplied(toolLeprechaun, 'Exchange');
-    if (!widgetFunctions.widgetTimeout(state, widgetData.farming.tool_leprechaun[withdrawDeposit].spade)) return false;
+    if (!widgetFunctions.widgetTimeout(state, toolLeprechaunInterface)) return false;
   }
   Object.values(widgetData.farming.tool_leprechaun[withdrawDeposit]).forEach(w => bot.widgets.interactSpecifiedWidget(w.packed_widget_id, w.identifier, w.opcode, w.p0));
   if (withdrawDeposit == 'withdraw' && !inventoryFunctions.itemInventoryTimeout.present(state, itemIds.spade)) return false;
